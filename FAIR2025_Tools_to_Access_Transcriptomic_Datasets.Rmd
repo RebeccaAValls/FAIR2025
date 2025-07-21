@@ -1,0 +1,184 @@
+---
+title: "FAIR 2025-Tools to access publicly available transcriptomic databases"
+author: "Rebecca Valls"
+date: "2025-07-02"
+output: html_document
+---
+
+Adapted from Zhongyou Li  Ph.D.'s module for "Tools to access publicly available transcriptomic databases"
+
+## recount3: Direct access to public RNA-seq data
+#### The recount3 package allows you to easily access pre-processed RNA-seq data from major public resources (like GEO or SRA) without the need for downloading or processing massive raw files yourself. The following workflow guides you step-by-step through installation, selection, downloading, and conversion to common analysis objects.
+
+If you're interested in understanding how recount3 processes sequences, checkout the paper: 
+https://genomebiology.biomedcentral.com/articles/10.1186/s13059-021-02533-6
+
+### Install and load the recount3 package
+First, we need to install the Bioconductor package recount3 (only once, unless already installed) and then load it into the R session.
+```{r}
+BiocManager::install("recount3")  # Installs recount3 from Bioconductor - run only once per system
+library("recount3")               # Loads the recount3 package to make its functions available
+```
+You only need to run the install command the first time. The library() command loads the package to use functions in later steps.
+
+
+
+### Find available human RNA-seq projects
+Next, we fetch a table of all available studies/projects within recount3. Each row contains metadata about a project, such as organism, data source, and project sample number.
+```{r}
+human_projects <- available_projects()  # Downloads a comprehensive list of available projects with metadata
+```
+You now have a data frame (human_projects) listing thousands of possible RNA-seq projects to explore.
+
+### Select a project of interest (e.g. SRP194165)
+Now, we'll focus on a single project for analysis. In this example, we use SRP194165, a GEO/SRA dataset on siControl/siSGK1 knockdowns in ME180 cervical cancer cells. The cancer cells were transfected with siControl or siSGK1 for 48 hours, followed by RNA extraction and RNA sequencing analysis. Each has three biological repeats. 
+```{r}
+## You can find studies using this Shiny app: 
+## https://jhubiostatistics.shinyapps.io/recount3-study-explorer/
+
+# Filter the project table for our target study: SRP194165
+proj_info <- subset(                             # Create a new object called proj_info by subsetting the data
+  human_projects,                                # Start with the human_projects data frame (all projects)
+  project == "SRP194165" &                       # Keep only rows where the 'project' column exactly matches "SRP194165"
+    project_type == "data_sources"               # ...AND where 'project_type' is "data_sources" (primary data, not publications/metadata)
+)
+
+```
+This command extracts metadata about just the SRP194165 study (with actual gene expression data) from the large table of all recount3 projects, so you can work with the specific dataset of interest.
+
+
+### Download the expression data
+With the project metadata, you can now download the gene-level count data as a Bioconductor object (RangedSummarizedExperiment, or RSE). A RSE object is a data container used in Bioconductor to store gene expression data along with detailed row and column annotations. It's built on the SummarizedExperiment class, with an added genomic coordinates layer (rowRanges), which makes it especially useful for RNA-seq and other genomic data.
+
+```{r}
+
+# Download the gene-level count data and associated metadata
+rse_gene_SRP194165 <- create_rse(proj_info)   # Downloads and creates an RSE object for the chosen project
+
+?create_rse                                   # View documentation about create_rse, which shows its parameters and output
+
+# Inspect the contents and structure of the RSE object:
+rse_gene_SRP194165                            # Prints a brief summary: rows (genes), columns (samples), and annotation
+
+# Additional ways to examine the content:
+
+dim(rse_gene_SRP194165)
+# Returns the dimensions of the object:
+# - The number of rows = genes (or other features)
+# - The number of columns = samples
+
+rowRanges(rse_gene_SRP194165)
+# Displays the genomic coordinates (chromosome, start, end, strand)
+# for each gene or transcript — this links expression values to genomic locations
+
+colnames(rse_gene_SRP194165)
+# Returns the sample names (column names of the assays matrix)
+# Useful for checking sample IDs 
+
+colData(rse_gene_SRP194165)
+# Returns sample metadata as a DataFrame
+# Each row is a sample; columns can include tissue, treatment, etc.
+
+assays(rse_gene_SRP194165)
+# Lists all assay data stored in the object (e.g., "counts", "raw_counts")
+# Each one is a matrix of genes × samples
+
+rownames(rse_gene_SRP194165)[1:5]
+# Shows the first five gene identifiers (usually ENSEMBL IDs)
+# Helpful for previewing
+
+elementMetadata(rse_gene_SRP194165)
+# Also called mcols(), this gives extra annotations for each gene (row)
+# Can include bp length, gene ID, gene type, etc
+# Not the same as rowRanges — this is for additional non-genomic feature info
+
+metadata(rse_gene_SRP194165)
+# Returns a list of general metadata for the whole dataset
+# May include dataset source, processing method, or notes
+
+```
+By running this code, you have now accessed and downloaded a gene-level expression matrix in R, formatted as an RSE object. This object organizes the data so that it's ready for normalization and downstream analysis—no manual parsing or file wrangling required!
+
+Here's more information on what is in the RSE object:
+
+rowRanges - A GRanges object with genomic coordinates (chromosome, start, end, strand) for each feature (usually a gene or transcript). Rows match the rows of your assay matrix. This is what makes it a “Ranged” SummarizedExperiment—each feature has genomic context.
+
+colData - A DataFrame with sample-level metadata. Each row corresponds to a sample (i.e., each column of the assays matrix). Columns might include: sample ID, tissue type, condition, age, etc. This is where you put your experimental design information for modeling.
+
+assays - The core of the object — your expression data. Contains one or more matrices (e.g., raw counts, TPMs, normalized values). Each row = gene (or transcript, exon, etc.), each column = sample.Think of this as the actual data matrix you’d use for DESeq2 or edgeR.
+
+NAMES - Names of the features (rows) — typically gene IDs like Ensembl or gene symbols. Can be retrieved using rownames(rse). Used to label rows in your assays matrix (e.g., “ENSG0000012345”).
+
+elementMetadata - Feature-level annotations (i.e., metadata for rows). Can contain functional annotation, gene symbols, etc. Different from rowRanges — doesn't have genomic coordinates. Think of this as additional info about each gene or row.
+
+metadata - A simple list with global information about the experiment. Can include information like where the data came from, processing steps, versioning, source URLs, etc. Use this to store notes about the object as a whole.
+
+
+
+
+
+### Normalize the raw counts
+RNA-seq samples can have different sequencing depths (library sizes), which affects raw read counts. Before comparing genes or samples, we must normalize counts to correct for these differences. This step replaces the raw counts with normalized values inside our RSE object.
+```{r}
+# Extract the raw, unnormalized counts from the RangedSummarizedExperiment object.
+unnormalized_df <- as.data.frame(assay(rse_gene_SRP194165))
+# Now 'unnormalized_df' is a data.frame of genes x samples with raw counts.
+
+# Normalize counts across samples by library size (sequencing depth)
+assay(rse_gene_SRP194165, "counts") <- transform_counts(rse_gene_SRP194165)
+# - transform_counts() computes normalized counts for each sample, adjusting for sequencing depth.
+# - assay(x, "counts") <- ... replaces the "counts" assay in the RSE object with these normalized values.
+
+?transform_counts  # Shows documentation for the transform_counts() function (optional, for curiosity)
+
+
+# Extract the normalized counts as a new data frame to view or analyze.
+normalized_df <- as.data.frame(transform_counts(rse_gene_SRP194165))
+# Now 'normalized_df' contains the normalized (library-size adjusted) counts for all genes and samples.
+```
+You have now made your gene expression counts directly comparable across samples by correcting for library size differences. This prepares your data for downstream statistical analysis.
+
+
+
+
+### Convert to a format edgeR understands
+Most differential expression tools—like edgeR—expect count data as a DGEList object. The DEFormats package makes it easy to convert recount3 data to this format. This prepares your processed recount3 data for standard workflows and compatibility with the edgeR package.
+
+```{r}
+# Install DEFormats package if you haven't already (run once per system)
+BiocManager::install("DEFormats")
+
+# Load the DEFormats package to access conversion functions
+library(DEFormats)
+
+# Convert the normalized RSE object to a DGEList (used by edgeR)
+dge_transform <- DGEList(rse_gene_SRP194165)
+#   - DGEList() automatically extracts gene counts and sample information from the RSE object
+
+# View documentation for DGEList if you want to know more
+?DGEList
+
+# Explore the sample metadata within your DGEList object
+dge_transform$samples$sra.sample_name  # Prints the SRA sample names for this study's samples
+
+# Connection to earlier modules: This DGEList is the same format you created from raw counts in the edgeR module. Now it’s coming from public data!
+
+```
+You’ve now converted your gene expression data to the standard format used by edgeR and many other Bioconductor tools. You can use this object (dge_transform) for downstream analysis, statistics, and visualization just like you would with your own count data.
+
+### Prepare for differential expression analysis
+Now that your public RNA-seq dataset is loaded, normalized, and in a DGEList format, it's vital to carefully review the experimental details. This ensures that you have the correct sample groupings and annotations for downstream modeling (e.g., identifying case vs. control). Usually, this step involves consulting the GEO record directly to extract metadata.
+
+```{r}
+# At this point: Go to the GEO entry for your study to view full sample metadata 
+# (e.g., treatment groups, timepoints, biological replicate information)
+# This gives you the crucial information needed for model design.
+## https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE130449
+
+## From there, you can build:
+## - A sample information matrix (e.g., treatment, genotype, time)
+## - A model matrix for your statistical analysis (e.g., group ~ treatment)
+
+## This is essential before running edgeR, DESeq2, or limma.
+
+```

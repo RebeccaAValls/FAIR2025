@@ -1,0 +1,397 @@
+---
+title: "FAIR 2025 - Data cleaning and merging multiple datasets "
+author: "Rebecca Valls"
+date: "2025-07-02"
+output: html_document
+---
+
+
+This hands-on workshop teaches you how to clean and merge gene expression matrices from **refine.bio**, inspect gene-level data, and perform basic data wrangling. We'll also introduce best practices for handling **missing values (NAs)** and give you exercises to practice these concepts. Adapted from Zhongyou Li, Ph.D., at University of Colorado Anschutz, module for "cleaning and merging"
+
+## Load and Inspect Refine.bio Data
+This section loads gene expression data downloaded from refine.bio for two different tissues (lung and testes). The data are stored as tab-separated values (.tsv) files. After loading, we preview each dataset and examine their structure to ensure they're properly formatted for downstream analysis. These exploratory steps help verify that the files are correctly read into R, with gene IDs as row names and samples as columns.
+
+
+```{r}
+# Read in transcriptomic data from refine.bio (tsv format)
+lung_df <- read.delim("Lung.tsv", 
+                      header = TRUE,             # Indicates that the first row contains column names (sample IDs)
+                      row.names = 1,             # Uses the first column as row names (gene IDs, usually ENSEMBL)
+                      stringsAsFactors = FALSE)  # Prevents R from auto-converting strings to factors (keeps gene IDs as strings)
+
+testes_df <- read.delim("testes.tsv", 
+                        header = TRUE,            
+                        row.names = 1,            
+                        stringsAsFactors = FALSE) 
+
+# Preview the first few rows of the lung data frame to quickly inspect content
+head(lung_df)          # Displays the first 6 rows of lung_df, showing a snippet of the data (genes × samples)
+
+# Display the structure of the lung data frame to get information on data types, dimensions, and sample column names
+str(lung_df)           # Shows the type of each column, number of rows/columns, and data preview
+
+# Display the structure of the testes data frame as well for confirmation
+str(testes_df)         # Ensures both datasets have the expected structure (same # of genes and columns)
+
+```
+
+At the end of this step, you will have two data frames—lung_df and testes_df—each with gene IDs as rows and samples as columns. By inspecting the data with head() and str(), you can verify that the import was successful and that your data are ready for cleaning, merging, or further analysis.
+
+
+
+## Basic summary stats
+Now that we've loaded the gene expression data, it's important to quickly summarize key features of these datasets. We'll focus on simple quality metrics: how many values are zero (i.e., undetected expression), and how many genes show no expression across all samples in each tissue. These checks provide a sense of data sparsity and may help guide decisions on data cleaning, normalization, or filtering steps later.
+
+
+```{r}
+# How many zeros are in the lung dataset?
+sum(lung_df == 0)               # Counts the total number of zeros (unexpressed values) in the entire lung dataset.
+
+# How many genes have no expression in _any_ lung or testes sample?
+sum(rowSums(lung_df) == 0)      # For each gene (row), sums all expression values across samples. 
+                                # 'rowSums(lung_df) == 0' returns TRUE for genes with all zeros, i.e., no expression in any lung sample.
+                                # 'sum(...)' counts the number of such genes.
+
+sum(rowSums(testes_df) == 0)    # Does the same as above, but for the testes dataset.
+                                # This identifies genes completely absent (all zero counts) across all testes samples.
+
+```
+These simple summary statistics let you quickly gauge data coverage. You can use this information to filter out genes with no or low expression prior to further analysis, improving power and interpretability down the line.
+
+
+## Consistency check: are gene orders identical?
+Before merging or comparing datasets, it's essential to confirm that genes (rows) are listed in the same order in your expression matrices. Even a small mismatch can lead to incorrect downstream analyses, as expression values could be incorrectly assigned to the wrong genes. This quick check ensures you can safely use functions like cbind() to combine your datasets.
+
+```{r}
+
+# Ensuring ENSEMBL IDs (row names) are in the same order for both datasets
+identical(row.names(lung_df), row.names(testes_df))  # Compares the vector of row names (usually ENSEMBL IDs) from lung_df and testes_df.
+                                                     # Returns TRUE if *all* row names are the same and in the same order,
+                                                     # otherwise returns FALSE (meaning you should not use cbind() directly!).
+
+```
+If this check returns TRUE, you know both datasets have gene expression values for the same genes, in the same order, and it's safe to directly combine columns using cbind(). If it returns FALSE, you’ll need to realign or merge them based on gene identifiers before combining.
+
+
+## Combine two clean datasets
+Once you've confirmed that both gene expression datasets have the same genes in the same order, you can safely combine them by columns. Here, we use cbind() to join the datasets side-by-side, so that all lung and testes samples appear together in one data frame. This is a common approach when preparing data for downstream applications like differential expression analysis.
+
+
+```{r}
+# If the row orders are the same, you can use cbind()
+cbind.df <- cbind(lung_df, testes_df)  # Combines the two data frames by columns.
+                                       # Each gene (row) will now have expression values from both the lung and testes samples.
+                                       # This assumes that the order of genes (row.names) matches in both datasets.
+
+# Check structures to confirm
+str(lung_df)       # Display the structure of lung_df to see its sample columns and data types.
+str(testes_df)     # Display structure of testes_df for comparison.
+str(cbind.df)      # Show structure of the combined data frame.
+                   # The columns of cbind.df should now be a concatenation of lung samples followed by testes samples.
+```
+Using cbind() in this way merges expression data from multiple tissues into a single matrix, assuming gene order matches. This merged data frame is useful for unified statistical analysis, visualization, or exporting combined results. Always confirm dataset structures before and after combining to prevent silent errors!
+
+
+
+
+## What if row orders differ? Scrambling to simulate real-world scenario
+In reality, gene expression matrices coming from different experiments or sources may not have their gene rows in the exact same order. This can lead to major problems if you try to combine data directly without checking order. Here, we’ll intentionally scramble the row order of testes_df to mimic such a real-life situation and demonstrate why careful matching is essential.
+
+
+```{r}
+# Scramble row order in testes_df
+index <- sample(1:40000, 40000, replace = FALSE)  # Creates a random permutation of numbers 1 to 40000 (assuming 40,000 genes)
+                                                 # 'index' can now be used to reorder the rows of a data frame
+
+scramble_testes_df <- testes_df[index, ]         # Rearranges rows of 'testes_df' according to the randomized order in 'index'
+                                                 # This simulates importing data where gene order is inconsistent
+
+# Check that scrambled order is different
+head(testes_df)                                 # Shows the first few rows of the original testes_df to display original row order (gene IDs)
+head(scramble_testes_df)                        # Shows first few rows of the scrambled data to demonstrate the new (misaligned) row order
+
+
+```
+This manual scrambling exercise shows how easy it is for row orders (gene IDs) to become mismatched between datasets. If you attempted to combine these two data frames now with cbind(), gene expression values would not match up properly by gene—potentially ruining any downstream analysis. Always verify and, if needed, re-align or merge datasets using gene identifiers before integration.
+
+
+
+## Merge dataframes with merge()
+When gene (row) orders differ, it’s safest to merge your datasets explicitly by gene identifier, such as ENSEMBL ID. This ensures that gene expression values are correctly matched, regardless of the original row ordering. The merge() function in R allows you to align data by a shared column key and control whether you want only overlapping genes or all genes from both datasets.
+
+```{r}
+# Add ENSEMBL ID as an actual column for merging
+lung_df$ENSEMBL <- row.names(lung_df)                # Copies the rownames (gene IDs) of lung_df into a new column called "ENSEMBL"
+scramble_testes_df$ENSEMBL <- row.names(scramble_testes_df)  # Does the same for the scrambled testes dataframe
+
+# Merge by ENSEMBL ID (only matching rows)
+merge_df <- merge(lung_df, scramble_testes_df, by = "ENSEMBL")  # Performs an inner join: keeps only rows (genes) found in both dataframes
+                                                                # Expression values from both tissues are matched exactly by ENSEMBL ID
+
+# Merge and retain all rows (even unmatched ones, resulting in NAs)
+merge_all_df <- merge(lung_df, scramble_testes_df, by = "ENSEMBL", all = TRUE) # Performs a full outer join: keeps all rows from both dataframes
+                                                                                # Where a gene is missing from either dataset, fills with NA
+
+str(merge_df)                                                   # Shows the structure of the merged dataframe of matched genes only
+str(merge_all_df)                                               # Shows the structure when all genes from both datasets are included (with possible NAs)
+
+```
+Using merge() is the safest way to combine data frames when row ordering might differ. Merging by a unique key like ENSEMBL ID guarantees that gene-level data are properly aligned. You can choose to keep only genes present in both datasets (using the default "inner join") or all genes (using all = TRUE for a "full outer join," with missing values filled as NA).
+
+
+
+
+## Data wrangling with base R and tidyverse
+R provides a variety of tools for importing and manipulating tabular data. The base R functions allow for flexible reading and writing of tab-, comma-, or space-delimited text files. The tidyverse is a popular suite of packages for data science, offering powerful and user-friendly commands for data wrangling, visualization, and modeling. Sometimes, datasets are provided as Excel spreadsheets, which can be read using the readxl package. Below, we demonstrate key components and show how to convert between data formats for robust, reproducible workflows.
+
+
+```{r}
+# ---- Base R functions for importing tabular data ----
+# These functions can read many widespread data formats (CSV, TSV, TXT)
+# These are built-in functions that don't require any extra packages:
+
+read.csv()      # Reads comma-separated (*.csv) files
+read.table()    # Reads general delimited text files, with customizable separator and header options
+read.delim()    # Shortcut to read tab-delimited (*.tsv) files
+
+
+# (Optional) Install tidyverse, a collection of packages useful for data manipulation and visualization
+# install.packages("tidyverse")        # Installs tidyverse from CRAN if not already installed
+# library(tidyverse)                   # Loads the tidyverse packages into your session
+
+#tidyverse function: reading Excel files using the readxl package within tidyverse
+#update to reflect your directory
+
+#install.packages("readxl")   # install if needed
+#library(readxl)              # load the package
+
+excel_sheets("~/Dartmouth College Dropbox/Rebecca Valls/Classes_Workshops/FAIR/FAIR 2025/Data Cleaning/Cleaning_+_Merging_Multiple_Datasets/datasets.xlsx")  # Lists all worksheet names in the Excel file, helping identify which sheet to read
+
+cars_example <- read_excel("~/Dartmouth College Dropbox/Rebecca Valls/Classes_Workshops/FAIR/FAIR 2025/Data Cleaning/Cleaning_+_Merging_Multiple_Datasets/datasets.xlsx", sheet = "mtcars")  # Reads the "mtcars" sheet from 'datasets.xlsx' into a tibble (a tidyverse-flavored data frame)
+str(cars_example)             # Displays the structure, data types, and preview of the imported data
+
+# Convert tibble to a base R data.frame for compatibility with non-tidyverse code
+cars_example_df <- as.data.frame(cars_example)  # Ensures the object is a base R data.frame, making it compatible with older or base-R-only functions
+str(cars_example_df)          # Displays the structure, data types, and preview of the imported data. Compare to cars_example
+
+```
+This section demonstrates how to bring data into R using both base R and tidyverse approaches, and how to read Excel files—an important real-world requirement. Always check your data structure (with str()) after import, and convert as needed for your downstream workflow.
+
+
+
+## Pattern matching with grep()
+Sometimes you need to extract rows from a data frame where a text pattern (like a brand or gene name) appears in a string column. The grep() function is a powerful way to search and filter rows by text patterns using regular expressions. Here, we demonstrate how to filter a cars dataset for models containing "Merc" in their name, then order the results by quarter mile time.
+
+```{r}
+#Using Base R (grep)
+# Filter rows by pattern match (e.g. cars with "Merc" in model name)
+Merc_df <- cars_example[grep("Merc", cars_example$model),            # grep("Merc", cars_example$model) returns row indices where "Merc" appears in the 'model' column
+                         c("model", "mpg", "cyl", "hp", "wt", "qsec")]  # Selects only a subset of columns for concise display
+
+# Order by quarter mile time (qsec)
+Merc_df <- Merc_df[order(Merc_df$qsec, decreasing = FALSE), ]        # Reorders the rows in Merc_df so that the cars with the slowest quarter mile times (highest "qsec") appear first
+
+Merc_df                                                            # Displays the filtered and sorted data frame
+
+#Using tidyverse (dplyr and stringr packages within tidyverse)
+Merc_df_tv <- cars_example %>%
+  filter(str_detect(model, "Merc")) %>%   # Keep only rows where 'model' contains "Merc"
+  select(model, mpg, cyl, hp, wt, qsec) %>% # Select specific columns
+  arrange(desc(qsec))                      # Sort by qsec, descending (slowest cars first)
+
+Merc_df_tv
+
+
+
+```
+By using grep(), you can easily find all rows where a pattern occurs in a column, making it simple to subset data on the basis of text. Further arranging or sorting those results allows you to quickly answer more complex questions with just a few lines of R code.
+
+
+## Handling missing data (NAs)
+Missing values (NA in R) are common in real datasets and can interfere with calculations if not properly handled. This section demonstrates strategies for detecting, summarizing, replacing, or removing missing values. You'll learn how to audit your data for NAs, compute statistics that skip NAs, and replace or omit missing data using base R tools.
+
+```{r}
+#install.packages("dslabs")      # Installs the 'dslabs' package, which contains the 'na_example' dataset (install only once)
+library(dslabs)                 # Loads the 'dslabs' package
+
+data("na_example")              # Loads the built-in vector 'na_example', which has some missing values (NAs) for demonstration
+
+str(na_example)                 # Examines the structure and content of the 'na_example' vector
+
+anyNA(na_example)               # Returns TRUE if there are any NAs present, FALSE otherwise
+
+sum(is.na(na_example))          # Counts the total number of NAs in the vector
+
+mean(na_example, na.rm = TRUE)  # Calculates the mean, ignoring NAs (otherwise result would be NA)
+
+# Replace NAs with 0
+na_example_0replace <- na_example                      # Makes a copy of 'na_example'
+na_example_0replace[is.na(na_example_0replace)] <- 0   # Changes all NAs in the copy to 0
+
+# Omit NAs from a data frame
+na_df <- data.frame(
+  c1 = c(3, NA, 3, 5, NA, 8),          # Creates a small data frame with some NAs in several columns
+  c2 = c(NA, 1, 2, 3, 4, 6),
+  c3 = c(7, NA, 4, 1, 2, 3)
+)
+
+na.omit(na_df)                         # Returns a new data frame with any row containing an NA removed
+
+na_df[is.na(na_df)] <- 0               # Replaces all NAs in the data frame with 0 (alternative to omitting rows)
+```
+Handling missing values is an important step in ensuring your data are robust for analysis. R provides straightforward tools to detect, summarize, and deal with NAs—including removing, ignoring, or replacing them—so your calculations and models can proceed smoothly.
+
+
+
+
+## EXERCISES 1: Working with the Iris data (datasets.xlsx)
+### Green (basic)
+1a. Read in the first sheet ("iris") of datasets.xlsx and store it as an object, iris_df.
+```{r}
+library(readxl)
+# By sheet name:
+iris_df <- read_excel("datasets.xlsx", sheet="iris")
+# By sheet index (if iris is the first sheet):
+iris_df <- read_excel("datasets.xlsx", sheet=1)
+
+```
+
+1b. What are the different variables (columns) in iris_df?
+```{r}
+str(iris_df)   # Shows the structure: see names and data types of all columns
+
+```
+
+
+1c. Create a subset with only Sepal.Length, Petal.Length, and Species.
+```{r}
+
+iris_df_sub <- iris_df[, c("Sepal.Length", "Petal.Length", "Species")]
+
+```
+
+
+### Blue (intermediate)
+
+1d. Reorder iris_df by Sepal.Length in descending (longest-first) order.
+```{r}
+iris_df <- iris_df[order(iris_df$Sepal.Length, decreasing = TRUE), ]
+
+```
+
+1e. Create a subset where Sepal.Length > 6, Petal.Width > 1, and Petal.Width < 2.
+```{r}
+iris_df_LengWidth <- iris_df[
+  iris_df$Sepal.Length > 6 & iris_df$Petal.Width > 1 & iris_df$Petal.Width < 2, 
+]
+```
+
+
+### Black (advanced)
+
+1f. Subset for all species names starting with "v" (virginica and versicolor).
+
+# solution 1: use grep() function
+```{r}
+iris_df[grep("^v", iris_df$Species), ]
+```
+
+# solution 2: use row subsetting syntax to select rows with "virginica" or "versicolor" in the Species column
+```{r}
+iris_df[iris_df$Species == "virginica" | iris_df$Species == "versicolor", ]
+
+```
+
+# double black: Create a new variable "Sumup" that sums up the numeric columns of each row.
+```{r}
+iris_df$Sumup <- apply(iris_df, 1, function(x) {
+  as.numeric(x[1:4]) |> sum()  # Sum first 4 columns (numeric)
+})
+
+iris_df
+
+```
+
+## EXERCISES 1: Working with Missing Data (us_contagious_diseases from dslabs)
+
+
+```{r}
+# Make sure the package is installed, then load the data set
+# install.packages("dslabs") # Uncomment if not installed
+library(dslabs)
+data(us_contagious_diseases)
+
+```
+
+### Green (basic)
+2a Is there any missing data in the us_contagious_diseases dataset?
+```{r}
+anyNA(us_contagious_diseases)
+```
+
+2b Create a subset of us_contagious_diseases that excludes rows with any missing data.
+```{r}
+us_no_na <- na.omit(us_contagious_diseases)
+
+```
+
+
+### Blue (intermediate)
+2c How many data points are missing in the dataset?
+```{r}
+sum(is.na(us_contagious_diseases))
+```
+
+### Black (advanced)
+2d Create a subset of us_contagious_diseases with rows that have at least one missing value.
+```{r}
+us_with_na <- us_contagious_diseases[rowSums(is.na(us_contagious_diseases)) > 0, ]
+
+```
+
+### Bonus Black: Create an ENSEMBL annotation table for a refine.bio count table
+Bonus) Read in the count table (e.g. SRP066992.tsv) and prepare an annotation table suitable for edgeR analysis.
+
+```{r}
+# Read in the gene count table
+Data <- read.table(file = "SRP066992.tsv",
+                   sep = "\t",
+                   header = TRUE,
+                   row.names = 1,
+                   stringsAsFactors = FALSE)
+ENSG_Data <- row.names(Data)
+
+# Check for duplicates
+sum(duplicated(ENSG_Data))
+
+# Retrieve gene annotation using org.Hs.eg.db
+library(org.Hs.eg.db)
+ENSG_refine.bio_Data_Hs.db_output <- select(org.Hs.eg.db, 
+                                            keys = ENSG_Data,
+                                            keytype = "ENSEMBL", 
+                                            columns = c("ENTREZID", "SYMBOL", "GENENAME"))
+
+# Remove duplicate ENSEMBL IDs, keeping the first occurrence
+unique.ENSG_Hs.db.output <- ENSG_refine.bio_Data_Hs.db_output[
+  !duplicated(ENSG_refine.bio_Data_Hs.db_output$ENSEMBL), ]
+
+# Coerce ENSEMBL vector to data frame for merging
+RNAseq_ensembl_df <- data.frame(ENSG_Data)
+
+# Merge the two tables to create a matching annotation table
+annotable.bonus.black <- merge(
+  RNAseq_ensembl_df,
+  unique.ENSG_Hs.db.output,
+  by.x = "ENSG_Data", 
+  by.y = "ENSEMBL", 
+  all.x = TRUE)
+
+colnames(annotable.bonus.black) <- c("ENSEMBL", "ENTREZID", "SYMBOL", "GENENAME")
+
+# Check that the order matches
+identical(ENSG_Data, annotable.bonus.black$ENSEMBL)
+
+```
+
+
+
